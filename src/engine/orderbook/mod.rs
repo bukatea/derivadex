@@ -3,7 +3,7 @@ pub use error::OrderBookError;
 use error::{OrderBookError as Error, Result};
 
 mod eip712;
-use eip712::{Eip712, Eip712Domain, EncodeDataable, HashStructable, TypeHashable};
+use eip712::{Eip712, Eip712Domain, EncodeDataable, TypeHashable};
 
 use lazy_static::lazy_static;
 use rust_decimal::Decimal;
@@ -53,8 +53,6 @@ impl EncodeDataable for Order {
         .concat()
     }
 }
-
-impl HashStructable for Order {}
 
 #[derive(Copy, Clone, Serialize)]
 pub struct L2Order {

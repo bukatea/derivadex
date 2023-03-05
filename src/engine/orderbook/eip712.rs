@@ -51,6 +51,8 @@ pub trait HashStructable: TypeHashable + EncodeDataable {
     }
 }
 
+impl<T: TypeHashable + EncodeDataable> HashStructable for T {}
+
 pub struct Eip712Domain {
     pub name: &'static str,
     pub version: &'static str,
@@ -67,8 +69,6 @@ impl EncodeDataable for Eip712Domain {
         [self.name.encode_data(), self.version.encode_data()].concat()
     }
 }
-
-impl HashStructable for Eip712Domain {}
 
 pub struct Eip712 {
     pub domain: Eip712Domain,
@@ -89,5 +89,39 @@ impl Eip712 {
             .concat(),
         )
         .into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use web3::ethabi::ethereum_types::BigEndianHash;
+    use web3::ethabi::Uint;
+
+    use super::*;
+    use crate::{Order, Side};
+
+    #[test]
+    fn test_eip712() {
+        let eip712 = Eip712::new(Eip712Domain {
+            name: "DDX take-home",
+            version: "0.1.0",
+        });
+        let order = Order {
+            amount: 1234.into(),
+            nonce: H256::from_uint(&Uint::from_dec_str("12").unwrap()),
+            price: 5432.into(),
+            side: Side::Bid,
+            trader_address: Address::from_str("0x3A880652F47bFaa771908C07Dd8673A787dAEd3A")
+                .unwrap(),
+            timestamp: 0,
+        };
+        let hash = eip712.encode(order);
+        assert_eq!(
+            hash,
+            H256::from_str("0x15a7b83cc86b50aaa2fa0c0871d5dbaae62f116436291e976c84b034b58cb728")
+                .unwrap()
+        );
     }
 }

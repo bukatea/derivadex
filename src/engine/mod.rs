@@ -51,7 +51,7 @@ impl Engine {
     }
 
     pub fn delete_account(&mut self, address: Address) -> Result<()> {
-        if let Some(_) = self.accounts.remove(&address) {
+        if self.accounts.remove(&address).is_some() {
             return Ok(());
         }
 
