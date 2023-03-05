@@ -40,6 +40,7 @@ impl Engine {
         // rescale to 18 decimal places
         account.usd_balance.rescale(18);
         account.ddx_balance.rescale(18);
+        self.accounts.insert(account.trader_address, account);
         Ok(account.trader_address)
     }
 
@@ -58,6 +59,7 @@ impl Engine {
         Err(Error::AccountNotFound(address))
     }
 
+    // TODO: make more modular, code for Bid and Ask are similar
     pub fn create_order(&mut self, order: Order) -> Result<Vec<Fill>> {
         let taker = self.accounts[&order.trader_address];
         match order.side {
@@ -74,18 +76,24 @@ impl Engine {
                     .usd_book_outstanding += usd_cost;
                 self.book
                     .add_bid(order)
-                    .map(|fills| {
+                    .map(|(hash_opt, fills)| {
+                        // TODO: do hash_to_address removals when the order is completely fulfilled
+                        if let Some(hash) = hash_opt {
+                            self.hash_to_address.insert(hash, order.trader_address);
+                        }
                         fills.iter().for_each(|fill| {
                             let taker = self.accounts.get_mut(&order.trader_address).unwrap();
                             let usd_cost = fill.fill_amount * fill.price;
                             taker.usd_balance -= usd_cost;
                             taker.usd_book_outstanding -= usd_cost;
+                            taker.ddx_balance += fill.fill_amount;
                             let maker = self
                                 .accounts
                                 .get_mut(&self.hash_to_address[&fill.maker_hash])
                                 .unwrap();
                             maker.ddx_balance -= fill.fill_amount;
                             maker.ddx_book_outstanding -= fill.fill_amount;
+                            maker.usd_balance += usd_cost;
                         });
                         fills
                     })
@@ -104,18 +112,23 @@ impl Engine {
                     .ddx_book_outstanding += ddx_cost;
                 self.book
                     .add_ask(order)
-                    .map(|fills| {
+                    .map(|(hash_opt, fills)| {
+                        if let Some(hash) = hash_opt {
+                            self.hash_to_address.insert(hash, order.trader_address);
+                        }
                         fills.iter().for_each(|fill| {
                             let taker = self.accounts.get_mut(&order.trader_address).unwrap();
                             let usd_cost = fill.fill_amount * fill.price;
                             taker.ddx_balance -= fill.fill_amount;
                             taker.ddx_book_outstanding -= fill.fill_amount;
+                            taker.usd_balance += usd_cost;
                             let maker = self
                                 .accounts
                                 .get_mut(&self.hash_to_address[&fill.maker_hash])
                                 .unwrap();
-                            maker.ddx_balance -= usd_cost;
-                            maker.ddx_book_outstanding -= usd_cost;
+                            maker.usd_balance -= usd_cost;
+                            maker.usd_book_outstanding -= usd_cost;
+                            maker.ddx_balance += fill.fill_amount;
                         });
                         fills
                     })

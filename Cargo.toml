@@ -13,6 +13,7 @@ rust_decimal_macros = "1.28"
 displaydoc = "0.2"
 thiserror = "1.0.31"
 serde = { version = "1.0.152", features = ["derive"] }
+serde_repr = "0.1.10"
 lazy_static = "1.4.0"
 
 [dependencies.uuid]

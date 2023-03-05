@@ -94,13 +94,11 @@ impl Eip712 {
 
 #[cfg(test)]
 mod tests {
+    use rust_decimal_macros::dec;
     use std::str::FromStr;
 
-    use web3::ethabi::ethereum_types::BigEndianHash;
-    use web3::ethabi::Uint;
-
     use super::*;
-    use crate::{Order, Side};
+    use crate::{Nonce, Order, Side};
 
     #[test]
     fn test_eip712() {
@@ -108,10 +106,12 @@ mod tests {
             name: "DDX take-home",
             version: "0.1.0",
         });
+        // with 1234 and 5432 interpreted as a decimal it doesn't work
+        // I assume what was meant is that 1234 and 5432 are the actual hashed values
         let order = Order {
-            amount: 1234.into(),
-            nonce: H256::from_uint(&Uint::from_dec_str("12").unwrap()),
-            price: 5432.into(),
+            amount: dec!(1234) / dec!(10e18),
+            nonce: Nonce(H256::from_low_u64_be(12)),
+            price: dec!(5432) / dec!(10e18),
             side: Side::Bid,
             trader_address: Address::from_str("0x3A880652F47bFaa771908C07Dd8673A787dAEd3A")
                 .unwrap(),

@@ -88,25 +88,16 @@ async fn get_book(engine: web::Data<Mutex<Engine>>) -> impl Responder {
     Ok::<HttpResponse, DerivadexError>(HttpResponse::Ok().json(l2_order_book))
 }
 
-#[get("/")]
-async fn hello() -> impl Responder {
-    HttpResponse::Ok().body("Hello world!")
-}
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let app_data = web::Data::new(Mutex::new(Engine::new()));
     HttpServer::new(move || {
         App::new()
-            .app_data(JsonConfig::default().error_handler(|err, _| {
-                actix_web::error::InternalError::from_response(
-                    err,
-                    HttpResponse::BadRequest().into(),
-                )
-                .into()
-            }))
+            .app_data(
+                JsonConfig::default()
+                    .error_handler(|err, _| actix_web::error::ErrorBadRequest(err)),
+            )
             .app_data(app_data.clone())
-            .service(hello)
             .service(
                 web::scope("/accounts")
                     .service(create_account)

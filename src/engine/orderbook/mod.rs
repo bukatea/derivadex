@@ -7,6 +7,7 @@ use eip712::{Eip712, Eip712Domain, EncodeDataable, TypeHashable};
 
 use lazy_static::lazy_static;
 use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
 use serde::Serialize;
 use std::{
     cmp::Reverse,
@@ -21,7 +22,8 @@ use web3::{
 use crate::{Fill, Order, Side};
 
 fn decimal_to_u256(decimal: Decimal) -> U256 {
-    U256::from_dec_str(&decimal.to_string()).unwrap()
+    // prob there is a more efficient way than this
+    U256::from_dec_str(&(decimal * dec!(10e18)).normalize().to_string()).unwrap()
 }
 
 lazy_static! {
@@ -95,7 +97,9 @@ impl OrderBook {
         }
     }
 
-    pub fn add_bid(&mut self, mut bid: Order) -> Result<Vec<Fill>> {
+    // TODO: make more modular, code for Bid and Ask are similar
+    // TODO: find better return than tuple of order hash (if it goes into book) and vector of fills
+    pub fn add_bid(&mut self, mut bid: Order) -> Result<(Option<H256>, Vec<Fill>)> {
         let taker_hash = self.eip712.encode(bid);
         if let Some(existing_bid) = self.hash_to_order.get(&taker_hash) {
             if existing_bid.trader_address == bid.trader_address {
@@ -104,13 +108,14 @@ impl OrderBook {
         }
 
         // get possible fills
+        let mut self_match = false;
         let mut fills = vec![];
         for (_, ask) in self
             .asks
             .range((Unbounded, Included((bid.price, bid.timestamp))))
         {
             if ask.trader_address == bid.trader_address {
-                // self-match
+                self_match = true;
                 break;
             }
 
@@ -146,25 +151,27 @@ impl OrderBook {
                     .get_mut(&(ask.price, ask.timestamp))
                     .unwrap()
                     .amount -= fill.fill_amount;
-                *self.agg_ask_amt.get_mut(&ask.price).unwrap() -= ask.amount;
+                *self.agg_ask_amt.get_mut(&ask.price).unwrap() -= fill.fill_amount;
             }
         }
 
-        if bid.amount > Decimal::ZERO {
+        let mut opt = Some(taker_hash);
+        if !self_match && bid.amount > Decimal::ZERO {
             // add remaining bid to book
             self.bids.insert((Reverse(bid.price), bid.timestamp), bid);
-            self.hash_to_order
-                .insert(taker_hash, self.bids[&(Reverse(bid.price), bid.timestamp)]);
+            self.hash_to_order.insert(taker_hash, bid);
             *self
                 .agg_bid_amt
                 .entry(Reverse(bid.price))
                 .or_insert(Decimal::ZERO) += bid.amount;
+        } else {
+            opt.take();
         }
 
-        Ok(fills)
+        Ok((opt, fills))
     }
 
-    pub fn add_ask(&mut self, mut ask: Order) -> Result<Vec<Fill>> {
+    pub fn add_ask(&mut self, mut ask: Order) -> Result<(Option<H256>, Vec<Fill>)> {
         let taker_hash = self.eip712.encode(ask);
         if let Some(existing_ask) = self.hash_to_order.get(&taker_hash) {
             if existing_ask.trader_address == ask.trader_address {
@@ -173,13 +180,14 @@ impl OrderBook {
         }
 
         // get possible fills
+        let mut self_match = false;
         let mut fills = vec![];
         for (_, bid) in self
             .bids
             .range((Unbounded, Included((Reverse(ask.price), ask.timestamp))))
         {
             if bid.trader_address == ask.trader_address {
-                // self-match
+                self_match = true;
                 break;
             }
 
@@ -206,7 +214,7 @@ impl OrderBook {
                 // fill completely uses up bid, remove
                 self.bids.remove(&(Reverse(bid.price), bid.timestamp));
                 self.hash_to_order.remove(&fill.maker_hash);
-                *self.agg_bid_amt.get_mut(&Reverse(bid.price)).unwrap() -= ask.amount;
+                *self.agg_bid_amt.get_mut(&Reverse(bid.price)).unwrap() -= bid.amount;
                 if self.agg_bid_amt[&Reverse(bid.price)] == Decimal::ZERO {
                     self.agg_bid_amt.remove(&Reverse(bid.price));
                 }
@@ -215,19 +223,21 @@ impl OrderBook {
                     .get_mut(&(Reverse(bid.price), bid.timestamp))
                     .unwrap()
                     .amount -= fill.fill_amount;
-                *self.agg_bid_amt.get_mut(&Reverse(bid.price)).unwrap() -= ask.amount;
+                *self.agg_bid_amt.get_mut(&Reverse(bid.price)).unwrap() -= fill.fill_amount;
             }
         }
 
-        if ask.amount > Decimal::ZERO {
+        let mut opt = Some(taker_hash);
+        if !self_match && ask.amount > Decimal::ZERO {
             // add remaining ask to book
             self.asks.insert((ask.price, ask.timestamp), ask);
-            self.hash_to_order
-                .insert(taker_hash, self.asks[&(ask.price, ask.timestamp)]);
+            self.hash_to_order.insert(taker_hash, ask);
             *self.agg_ask_amt.entry(ask.price).or_insert(Decimal::ZERO) += ask.amount;
+        } else {
+            opt.take();
         }
 
-        Ok(fills)
+        Ok((opt, fills))
     }
 
     pub fn get_order(&self, order_hash: H256) -> Result<Order> {
@@ -242,15 +252,17 @@ impl OrderBook {
             match order.side {
                 Side::Bid => {
                     self.bids.remove(&(Reverse(order.price), order.timestamp));
-                    *self.agg_bid_amt.get_mut(&Reverse(order.price)).unwrap() -= order.amount;
-                    if self.agg_bid_amt[&Reverse(order.price)] == Decimal::ZERO {
+                    let bid = self.agg_bid_amt.get_mut(&Reverse(order.price)).unwrap();
+                    *bid -= order.amount;
+                    if *bid == Decimal::ZERO {
                         self.agg_bid_amt.remove(&Reverse(order.price));
                     }
                 }
                 Side::Ask => {
                     self.asks.remove(&(order.price, order.timestamp));
-                    *self.agg_ask_amt.get_mut(&order.price).unwrap() -= order.amount;
-                    if self.agg_ask_amt[&order.price] == Decimal::ZERO {
+                    let ask = self.agg_ask_amt.get_mut(&order.price).unwrap();
+                    *ask -= order.amount;
+                    if *ask == Decimal::ZERO {
                         self.agg_ask_amt.remove(&order.price);
                     }
                 }
